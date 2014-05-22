@@ -68,9 +68,17 @@ local debug = pcall(require, "debug") and package.loaded.debug or debug
 local now = pcall(require, "socket") and package.loaded.socket.gettime
    or pcall(require, "posix") and package.loaded.posix.gettimeofday and
          function ()
-            local t = package.loaded.posix.gettimeofday()
-            local s, us = t.sec, t.usec
-            return s + us / 1000000
+            local tod = package.loaded.posix.gettimeofday()
+            if type(tod) == "table" then
+               -- lua 5.2
+               local t = package.loaded.posix.gettimeofday()
+               local s, us = t.sec, t.usec
+               return s + us / 1000000
+            else
+               -- lua 5.1
+               local s, us = package.loaded.posix.gettimeofday()
+               return s + us / 1000000
+            end
          end
    or os.time
 
