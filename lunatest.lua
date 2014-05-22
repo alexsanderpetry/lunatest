@@ -547,6 +547,81 @@ verbose_hooks = {
 
 setmetatable(verbose_hooks, {__index = default_hooks })
 
+-- xml
+
+local xml_output_file = "lunatest-result.xml"
+
+local function set_xml_output_file(newfile)
+   xml_output_file = newfile or xml_output_file
+end
+
+local function write_line(file, line)
+   file:write(line.."\n")
+end
+
+local function generate_xml_report(results)
+   local xmlfile = io.open(xml_output_file, "w")
+   
+   if not xmlfile then
+      print("Cannot open xml file. "..tostring(xml_output_file))
+      return
+   end
+
+   local total_fail = count(results.fail)
+   local total_skip = count(results.skip)
+   local total_err = count(results.err)
+   local total_pass = count(results.pass)
+
+   local total_tests = total_fail + total_skip + total_err + total_pass
+   local total_elapsed = results.t_post - results.t_pre
+
+   write_line(xmlfile, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
+   write_line(xmlfile,
+      fmt("<testsuites tests=\"%d\" failures=\"%d\" disabled=\"%d\" errors=\"%d\" time=\"%f\" name=\"AllTests\">",
+         total_tests, total_fail, total_skip, total_err, total_elapsed))
+
+   for sname,sres in pairs(results.suites) do
+      local suite_fail = count(sres.fail)
+      local suite_skip = count(sres.skip)
+      local suite_err = count(sres.err)
+      local suite_pass = count(sres.pass)
+
+      local suite_tests = suite_fail + suite_skip + suite_err + suite_pass
+      local suite_elapsed = sres.t_post - sres.t_pre
+
+      write_line(xmlfile,
+         fmt("  <testsuite name=\"%s\" tests=\"%d\" failures=\"%d\" disabled=\"%d\" errors=\"%d\" time=\"%f\">",
+            sname, suite_tests, suite_fail, suite_skip, suite_err, suite_elapsed))
+
+      for _,set in ipairs({ "fail", "err", "skip", "pass" }) do
+         local resultset = sres[set]
+         for tname,tres in pairs(resultset) do
+            write_line(xmlfile,
+               fmt("    <testcase name=\"%s\" status=\"%s\" time=\"%f\" classname=\"%s\"/>",
+                  tname, set, tres.elapsed, sname))
+         end
+      end
+
+      write_line(xmlfile, "  </testsuite>")
+   end
+
+   write_line(xmlfile, "</testsuites>")
+end
+
+---Default xml behavior.
+xml_hooks = {
+   -- Implements only done hook.
+   done = function(r)
+       if default_hooks.done then
+          -- Preserves default behavior.
+          default_hooks.done(r)
+       end
+       generate_xml_report(r)
+    end
+}
+
+setmetatable(xml_hooks, {__index = default_hooks })
+
 
 -- ################
 -- # Registration #
@@ -670,6 +745,8 @@ local function cmd_line_switches(arg)
          opts.suite_pat = arg[i+1]
       elseif v == "-t" or v == "--test" then
          opts.test_pat = arg[i+1]
+      elseif v == "-x" or v == "--xml" then
+         opts.xml_output = arg[i+1] or xml_output_file
       end
    end
    return opts
@@ -706,6 +783,7 @@ local function run_suite(hooks, opts, results, sname, tests)
       end
 
       if run_suite and count(tests) > 0 then
+         res.t_pre = now()
          local setup, teardown = tests.setup, tests.teardown
          tests.setup, tests.teardown = nil, nil
 
@@ -717,7 +795,9 @@ local function run_suite(hooks, opts, results, sname, tests)
             end
          end
          if steardown then pcall(steardown) end
+         res.t_post = now()
          if hooks.end_suite then hooks.end_suite(res) end
+         results.suites[sname] = res
          combine_results(results, res)
       end
    end
@@ -738,6 +818,9 @@ function lunatest.run(hooks, opts)
 
    if hooks == true or opts.verbose then
       hooks = verbose_hooks
+   elseif opts.xml_output then
+      hooks = xml_hooks
+      set_xml_output_file(opts.xml_output)
    else
       hooks = hooks or {}
    end
@@ -745,6 +828,7 @@ function lunatest.run(hooks, opts)
    setmetatable(hooks, {__index = default_hooks})
 
    local results = result_table("main")
+   results.suites = {}
    results.t_pre = now()
 
    -- If it's all in one test file, check its environment, too.
